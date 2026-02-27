@@ -121,6 +121,35 @@
 
   <div class="grid" id="grid"></div>
 
+  <div style="margin-top:24px;">
+    <div class="row">
+      <div class="big">Simulated portfolio</div>
+      <div class="muted">Auto-trading on BTC/ETH using strategy signals</div>
+    </div>
+    <div id="holdings"></div>
+    <div style="margin-top:8px;">
+      <div class="row">
+        <div class="big">Trade history</div>
+        <div class="muted" id="tradesStatus"></div>
+      </div>
+      <div style="overflow:auto; max-height:260px;">
+        <table id="tradesTable" style="width:100%; border-collapse:collapse; font-size:12px;">
+          <thead>
+            <tr>
+              <th style="text-align:left; padding:4px; border-bottom:1px solid var(--border);">Time</th>
+              <th style="text-align:left; padding:4px; border-bottom:1px solid var(--border);">Symbol</th>
+              <th style="text-align:left; padding:4px; border-bottom:1px solid var(--border);">Side</th>
+              <th style="text-align:right; padding:4px; border-bottom:1px solid var(--border);">Price</th>
+              <th style="text-align:right; padding:4px; border-bottom:1px solid var(--border);">Qty</th>
+              <th style="text-align:right; padding:4px; border-bottom:1px solid var(--border);">Notional</th>
+            </tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
 <script>
   const grid = document.getElementById("grid");
   const statusEl = document.getElementById("status");
@@ -361,6 +390,70 @@
   ws.onclose = () => statusEl.textContent = "disconnected";
   ws.onerror = () => statusEl.textContent = "error";
   ws.onmessage = (ev) => render(JSON.parse(ev.data));
+
+  // --- trades & portfolio polling ---
+  const holdingsEl = document.getElementById("holdings");
+  const tradesTableBody = document.querySelector("#tradesTable tbody");
+  const tradesStatus = document.getElementById("tradesStatus");
+
+  function renderHoldings(data){
+    if (!data.enabled) {
+      holdingsEl.innerHTML = '<div class="muted">Trading bot is disabled (no DATABASE_URL configured on server).</div>';
+      tradesStatus.textContent = "";
+      tradesTableBody.innerHTML = "";
+      return;
+    }
+
+    const rows = (data.holdings || []).map(h => {
+      const totalPnl = (h.realized_pnl_usd || 0) + (h.unrealized_pnl_usd || 0);
+      const pnlColor = totalPnl > 0 ? 'style="color:#22c55e;"' : (totalPnl < 0 ? 'style="color:#f97373;"' : "");
+      return `
+        <div class="row">
+          <div>${h.symbol}</div>
+          <div class="muted">
+            pos ${fmt(h.position_qty)} @ ${fmt(h.avg_price)} |
+            mkt ${fmt(h.market_price)} |
+            value ${fmt(h.market_value_usd)} $
+          </div>
+          <div ${pnlColor}>
+            P&L: ${fmt(totalPnl)} $
+            <span class="muted">(real ${fmt(h.realized_pnl_usd)} / unrl ${fmt(h.unrealized_pnl_usd)})</span>
+          </div>
+        </div>
+      `;
+    });
+
+    holdingsEl.innerHTML = rows.length ? rows.join("") : '<div class="muted">No trades yet.</div>';
+
+    const trades = data.trades || [];
+    tradesStatus.textContent = `${trades.length} trades`;
+    tradesTableBody.innerHTML = trades.map(t => {
+      const sideColor = t.side === "BUY" ? 'style="color:#22c55e;"' : 'style="color:#f97373;"';
+      return `
+        <tr>
+          <td style="padding:4px; border-bottom:1px solid var(--border);">${t.ts}</td>
+          <td style="padding:4px; border-bottom:1px solid var(--border);">${t.symbol}</td>
+          <td style="padding:4px; border-bottom:1px solid var(--border);" ${sideColor}>${t.side}</td>
+          <td style="padding:4px; border-bottom:1px solid var(--border); text-align:right;">${fmt(t.price)}</td>
+          <td style="padding:4px; border-bottom:1px solid var(--border); text-align:right;">${fmt(t.qty)}</td>
+          <td style="padding:4px; border-bottom:1px solid var(--border); text-align:right;">${fmt(t.notional_usd)}</td>
+        </tr>
+      `;
+    }).join("");
+  }
+
+  async function pollTrades(){
+    try {
+      const res = await fetch("/api/trades");
+      const data = await res.json();
+      renderHoldings(data);
+    } catch (e) {
+      tradesStatus.textContent = "error loading trades";
+    }
+  }
+
+  pollTrades();
+  setInterval(pollTrades, 15000);
 </script>
 </body>
 </html>

@@ -5,3 +5,4 @@ pandas==2.2.2
 numpy==2.0.1
 pydantic==2.8.2
 python-dotenv==1.0.1
+asyncpg

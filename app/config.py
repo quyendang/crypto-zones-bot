@@ -23,4 +23,10 @@ class Settings(BaseModel):
     SMA_SLOW: int = int(os.getenv("SMA_SLOW", "50"))
     SMA_TREND: int = int(os.getenv("SMA_TREND", "200"))
 
+    # Database & trading bot
+    DATABASE_URL: str | None = os.getenv("DATABASE_URL")
+    TRADE_INTERVAL_SECONDS: int = int(os.getenv("TRADE_INTERVAL_SECONDS", "300"))  # 5 minutes
+    MIN_DIFF_ETH: float = float(os.getenv("MIN_DIFF_ETH", "100"))
+    MIN_DIFF_BTC: float = float(os.getenv("MIN_DIFF_BTC", "2000"))
+
 settings = Settings()
