@@ -1,0 +1,366 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1"/>
+  <title>Crypto Zones Bot</title>
+  <style>
+    :root {
+      --bg: #0b1120;
+      --bg-card: #020617;
+      --bg-card-alt: #020617;
+      --border: #1f2937;
+      --text: #e5e7eb;
+      --muted: #9ca3af;
+      --accent-buy: #22c55e;
+      --accent-sell: #f97373;
+      --accent-neutral: #4b5563;
+    }
+    body {
+      font-family: ui-sans-serif, system-ui;
+      margin: 16px;
+      background: var(--bg);
+      color: var(--text);
+      transition: background 0.2s ease, color 0.2s ease;
+    }
+    body.light {
+      --bg: #f9fafb;
+      --bg-card: #ffffff;
+      --bg-card-alt: #ffffff;
+      --border: #e5e7eb;
+      --text: #111827;
+      --muted: #6b7280;
+      --accent-buy: #16a34a;
+      --accent-sell: #dc2626;
+      --accent-neutral: #4b5563;
+    }
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(360px, 1fr));
+      gap: 12px;
+      margin-top: 12px;
+    }
+    .card {
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 12px;
+      background: radial-gradient(circle at top left, rgba(34,197,94,0.04), transparent 60%), var(--bg-card);
+    }
+    .card.sell {
+      background: radial-gradient(circle at top left, rgba(248,113,113,0.04), transparent 60%), var(--bg-card-alt);
+    }
+    .row {
+      display:flex;
+      justify-content: space-between;
+      align-items: center;
+      margin: 6px 0;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+    .tag {
+      padding: 2px 8px;
+      border-radius: 999px;
+      border: 1px solid var(--border);
+      font-size: 12px;
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      white-space: nowrap;
+    }
+    .buy { border-color: var(--accent-buy); }
+    .sell { border-color: var(--accent-sell); }
+    .muted { color: var(--muted); font-size: 12px; }
+    .big { font-size: 18px; font-weight: 700; }
+    canvas.mini {
+      width: 100%;
+      height: 80px;
+      border-radius: 10px;
+      background: rgba(15,23,42,0.7);
+      display: block;
+      margin-top: 6px;
+    }
+    body.light canvas.mini {
+      background: #f3f4f6;
+    }
+    .controls {
+      display:flex;
+      gap: 8px;
+      flex-wrap: wrap;
+      align-items:center;
+    }
+    .select {
+      padding: 4px 8px;
+      border-radius: 999px;
+      border: 1px solid var(--border);
+      background: transparent;
+      color: inherit;
+      font-size: 12px;
+    }
+    .toggle {
+      cursor: pointer;
+    }
+  </style>
+</head>
+<body>
+  <div class="row">
+    <div>
+      <div class="big">Crypto Buy/Sell Zones</div>
+      <div class="muted">Realtime via WebSocket • multi-symbol • multi-timeframe</div>
+    </div>
+    <div class="controls">
+      <select id="symbolFilter" class="select">
+        <option value="ALL">All symbols</option>
+      </select>
+      <select id="timeframeFilter" class="select">
+        <option value="ALL">All timeframes</option>
+      </select>
+      <div class="tag toggle" id="themeToggle">🌙</div>
+      <div class="tag" id="status">connecting…</div>
+    </div>
+  </div>
+
+  <div class="grid" id="grid"></div>
+
+<script>
+  const grid = document.getElementById("grid");
+  const statusEl = document.getElementById("status");
+  const symbolFilter = document.getElementById("symbolFilter");
+  const timeframeFilter = document.getElementById("timeframeFilter");
+  const themeToggle = document.getElementById("themeToggle");
+
+  // theme
+  const savedTheme = localStorage.getItem("theme");
+  if (savedTheme === "light") {
+    document.body.classList.add("light");
+    themeToggle.textContent = "☀️";
+  }
+  themeToggle.onclick = () => {
+    document.body.classList.toggle("light");
+    const isLight = document.body.classList.contains("light");
+    themeToggle.textContent = isLight ? "☀️" : "🌙";
+    localStorage.setItem("theme", isLight ? "light" : "dark");
+  };
+
+  function fmt(n){ return (n===null||n===undefined) ? "-" : n.toLocaleString(undefined,{maximumFractionDigits:2}); }
+
+  // simple tone generator for alerts
+  function playTone(freq, durationMs){
+    try {
+      const ctx = new (window.AudioContext || window.webkitAudioContext)();
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = "sine";
+      osc.frequency.value = freq;
+      gain.gain.value = 0.08;
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.start();
+      setTimeout(() => {
+        osc.stop();
+        ctx.close();
+      }, durationMs);
+    } catch (e) {
+      // ignore audio errors
+    }
+  }
+
+  const lastTriggers = {};
+
+  function keyOf(v) {
+    return `${v.symbol}-${v.timeframe}`;
+  }
+
+  function card(k, v){
+    const buy = v.triggers?.buy;
+    const sell = v.triggers?.sell;
+    const cls = buy ? "card buy" : (sell ? "card sell" : "card");
+    const ind = v.indicators || {};
+    return `
+      <div class="${cls}">
+        <div class="row">
+          <div class="big">${v.symbol} • ${v.timeframe.toUpperCase()}</div>
+          <div class="tag">${v.trend} • ${v.mode}</div>
+        </div>
+        <canvas class="mini" data-key="${k}"></canvas>
+        <div class="row">
+          <div>Price</div>
+          <div><b>${fmt(v.price)}</b></div>
+        </div>
+
+        <div class="row">
+          <div>Buy score</div>
+          <div>${v.score.buy}/100 ${buy ? "✅" : ""}</div>
+        </div>
+        <div class="row">
+          <div>Sell score</div>
+          <div>${v.score.sell}/100 ${sell ? "✅" : ""}</div>
+        </div>
+
+        <div class="row">
+          <div>Buy zone</div>
+          <div>${fmt(v.zones.buy[0])} → ${fmt(v.zones.buy[1])}</div>
+        </div>
+        <div class="row">
+          <div>Sell zone</div>
+          <div>${fmt(v.zones.sell[0])} → ${fmt(v.zones.sell[1])}</div>
+        </div>
+
+        <div class="row">
+          <div>Stop (buy)</div>
+          <div>${fmt(v.risk.stop_buy)}</div>
+        </div>
+        <div class="row">
+          <div>TP (buy)</div>
+          <div>${fmt(v.risk.tp_buy[0])} / ${fmt(v.risk.tp_buy[1])}</div>
+        </div>
+
+        <div class="row">
+          <div>Indicators</div>
+          <div class="muted">
+            RSI ${ind.rsi}, Z ${ind.z}, ATR ${ind.atr},
+            MACD ${ind.macd ?? "-"}, Sig ${ind.macd_signal ?? "-"},
+            K ${ind.kdj_k ?? "-"}, D ${ind.kdj_d ?? "-"}
+          </div>
+        </div>
+
+        <div class="muted">Updated: ${v.ts}</div>
+      </div>
+    `;
+  }
+
+  function drawMiniChart(canvas, v){
+    if (!canvas || !v.series || !Array.isArray(v.series.close) || v.series.close.length < 2) return;
+    const closes = v.series.close;
+    const buyZone = v.zones.buy;
+    const sellZone = v.zones.sell;
+    const price = v.price;
+    const buy = v.triggers?.buy;
+    const sell = v.triggers?.sell;
+
+    const dpr = window.devicePixelRatio || 1;
+    const rect = canvas.getBoundingClientRect();
+    canvas.width = rect.width * dpr;
+    canvas.height = rect.height * dpr;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
+    ctx.scale(dpr, dpr);
+
+    const w = rect.width;
+    const h = rect.height;
+    const padX = 4;
+    const padY = 4;
+
+    const minPrice = Math.min(...closes, buyZone[0], sellZone[0]);
+    const maxPrice = Math.max(...closes, buyZone[1], sellZone[1]);
+    const span = maxPrice - minPrice || 1;
+
+    const yFor = (p) => h - padY - ((p - minPrice) / span) * (h - padY * 2);
+    const xForIdx = (i) => padX + (i / (closes.length - 1)) * (w - padX * 2);
+
+    ctx.clearRect(0, 0, w, h);
+
+    // zones
+    ctx.fillStyle = "rgba(34,197,94,0.08)";
+    ctx.fillRect(
+      0,
+      yFor(buyZone[1]),
+      w,
+      Math.max(1, yFor(buyZone[0]) - yFor(buyZone[1]))
+    );
+    ctx.fillStyle = "rgba(248,113,113,0.08)";
+    ctx.fillRect(
+      0,
+      yFor(sellZone[1]),
+      w,
+      Math.max(1, yFor(sellZone[0]) - yFor(sellZone[1]))
+    );
+
+    // price line
+    ctx.strokeStyle = "rgba(148, 163, 184, 0.9)";
+    ctx.lineWidth = 1.4;
+    ctx.beginPath();
+    closes.forEach((p, i) => {
+      const x = xForIdx(i);
+      const y = yFor(p);
+      if (i === 0) ctx.moveTo(x, y);
+      else ctx.lineTo(x, y);
+    });
+    ctx.stroke();
+
+    // last price dot
+    const lastX = xForIdx(closes.length - 1);
+    const lastY = yFor(price);
+    ctx.fillStyle = buy
+      ? getComputedStyle(document.documentElement).getPropertyValue("--accent-buy") || "#22c55e"
+      : (sell
+        ? getComputedStyle(document.documentElement).getPropertyValue("--accent-sell") || "#f97373"
+        : getComputedStyle(document.documentElement).getPropertyValue("--accent-neutral") || "#6b7280");
+    ctx.beginPath();
+    ctx.arc(lastX, lastY, 3, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  function updateFilters(items) {
+    const symbols = new Set();
+    const timeframes = new Set();
+    for (const [, v] of items) {
+      if (v.symbol) symbols.add(v.symbol);
+      if (v.timeframe) timeframes.add(v.timeframe);
+    }
+
+    const currentSym = symbolFilter.value || "ALL";
+    const currentTf = timeframeFilter.value || "ALL";
+
+    symbolFilter.innerHTML = '<option value="ALL">All symbols</option>' +
+      Array.from(symbols).sort().map(s => `<option value="${s}">${s}</option>`).join("");
+    timeframeFilter.innerHTML = '<option value="ALL">All timeframes</option>' +
+      Array.from(timeframes).sort().map(t => `<option value="${t}">${t.toUpperCase()}</option>`).join("");
+
+    if ([...symbolFilter.options].some(o => o.value === currentSym)) {
+      symbolFilter.value = currentSym;
+    }
+    if ([...timeframeFilter.options].some(o => o.value === currentTf)) {
+      timeframeFilter.value = currentTf;
+    }
+  }
+
+  function render(payload){
+    const entries = Object.entries(payload)
+      .filter(([k]) => !k.startsWith("__"));
+
+    updateFilters(entries.map(([k, v]) => [k, v]));
+
+    const symSel = symbolFilter.value;
+    const tfSel = timeframeFilter.value;
+
+    const items = entries
+      .filter(([, v]) => (symSel === "ALL" || v.symbol === symSel))
+      .filter(([, v]) => (tfSel === "ALL" || v.timeframe === tfSel))
+      .sort(([a],[b]) => a.localeCompare(b));
+
+    grid.innerHTML = items.map(([k,v]) => card(k,v)).join("");
+
+    // draw charts + audio alerts
+    items.forEach(([k, v]) => {
+      const canvas = grid.querySelector(`canvas[data-key="${k}"]`);
+      drawMiniChart(canvas, v);
+
+      const last = lastTriggers[k] || { buy: false, sell: false };
+      const cur = { buy: !!(v.triggers && v.triggers.buy), sell: !!(v.triggers && v.triggers.sell) };
+      if (cur.buy && !last.buy) {
+        playTone(880, 250); // buy beep
+      } else if (cur.sell && !last.sell) {
+        playTone(440, 250); // sell beep
+      }
+      lastTriggers[k] = cur;
+    });
+  }
+
+  const ws = new WebSocket((location.protocol==="https:" ? "wss://" : "ws://") + location.host + "/ws");
+  ws.onopen = () => statusEl.textContent = "live";
+  ws.onclose = () => statusEl.textContent = "disconnected";
+  ws.onerror = () => statusEl.textContent = "error";
+  ws.onmessage = (ev) => render(JSON.parse(ev.data));
+</script>
+</body>
+</html>
