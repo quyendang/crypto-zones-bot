@@ -41,10 +41,12 @@
       margin-top: 12px;
     }
     .card {
+      position: relative;
       border: 1px solid var(--border);
       border-radius: 14px;
       padding: 12px;
       background: radial-gradient(circle at top left, rgba(34,197,94,0.04), transparent 60%), var(--bg-card);
+      overflow: hidden;
     }
     .card.sell {
       background: radial-gradient(circle at top left, rgba(248,113,113,0.04), transparent 60%), var(--bg-card-alt);
@@ -98,6 +100,32 @@
     }
     .toggle {
       cursor: pointer;
+    }
+
+    @keyframes borderPulseBuy {
+      0% {
+        box-shadow: 0 0 0 0 rgba(34,197,94,0.8);
+      }
+      100% {
+        box-shadow: 0 0 0 14px rgba(34,197,94,0);
+      }
+    }
+
+    @keyframes borderPulseSell {
+      0% {
+        box-shadow: 0 0 0 0 rgba(248,113,113,0.8);
+      }
+      100% {
+        box-shadow: 0 0 0 14px rgba(248,113,113,0);
+      }
+    }
+
+    .card.buy.active {
+      animation: borderPulseBuy 1.4s ease-out infinite;
+    }
+
+    .card.sell.active {
+      animation: borderPulseSell 1.4s ease-out infinite;
     }
   </style>
 </head>
@@ -202,7 +230,12 @@
   function card(k, v){
     const buy = v.triggers?.buy;
     const sell = v.triggers?.sell;
-    const cls = buy ? "card buy" : (sell ? "card sell" : "card");
+    const cls = [
+      "card",
+      buy ? "buy" : "",
+      sell && !buy ? "sell" : "",
+      buy || sell ? "active" : ""
+    ].join(" ").trim();
     const ind = v.indicators || {};
     return `
       <div class="${cls}">
